@@ -64,7 +64,7 @@ function parseSources(text) {
 }
 
 // 법으로 끝나지만 법령 이름이 아닌 낱말
-const NOT_LAW = new Set(["방법", "불법", "위법", "적법", "합법", "편법", "문법", "기법", "용법", "화법", "수법", "법", "입법", "사법", "헌법상"]);
+const NOT_LAW = new Set(["방법", "불법", "위법", "적법", "합법", "편법", "문법", "기법", "용법", "화법", "수법", "법", "입법", "사법", "헌법상", "취업규칙", "내부규칙"]);
 const PARTICLE = /(?:에서|으로|에|의|을|를|은|는|이|가|과|와|로|도|상|과의|에서의|에\s?따른)$/;
 
 function checkDomestic(domestic, sources) {
@@ -82,15 +82,14 @@ function checkDomestic(domestic, sources) {
       if (!owner) { problems.push(`${id}: ${m[0]} 바로 앞의 법령명이 sources.md에 없음`); continue; }
       if (!sources.get(owner).has(m[0])) problems.push(`${id}: ${owner} ${m[0]}이 sources.md에서 확인되지 않음`);
     }
-    // 「…법」·「…법률」로 끝나는 낱말은 모두 sources.md 법령명의 끝 낱말이어야 한다
-    const bare = line.replace(/\([^)]*\)/g, " ");
-    for (const raw of bare.split(/[\s,·「」—]+/)) {
-      const w = raw.replace(PARTICLE, "");
-      if (!/[가-힣](?:법|법률)$/.test(w) || NOT_LAW.has(w)) continue;
-      if (!lastWords.has(w)) problems.push(`${id}: 법령명 「${w}」이 sources.md에 없음`);
+    // 「…법」·「…법률」·「시행령」·「시행규칙」으로 끝나는 낱말마다, 거기까지의 글이 sources.md 법령명 하나로 끝나야 한다(전체 이름 대조)
+    const bare = line.replace(/\([^)]*\)/g, (x) => " ".repeat(x.length));
+    for (const m of bare.matchAll(/[^\s,·「」—]+/g)) {
+      const w = m[0].replace(PARTICLE, "");
+      if (!(/[가-힣](?:법|법률)$/.test(w) || /^(?:시행령|시행규칙)$/.test(w) || /[가-힣](?:시행령|시행규칙|심사지침|실시요령|안내서|가이드라인|고시|규칙|지침)$/.test(w)) || NOT_LAW.has(w)) continue;
+      const prefix = bare.slice(0, m.index + w.length).replace(/\s+/g, " ");
+      if (!names.some((n) => prefix.endsWith(n.replace(/\s+/g, " ")))) problems.push(`${id}: 법령·기준명 「…${prefix.slice(-24).trim()}」이 sources.md 법령명과 전체가 맞지 않음`);
     }
-    for (const n of line.matchAll(/[가-힣]+(?:시행령|시행규칙|심사지침|실시요령|안내서|가이드라인|고시|규칙|지침)(?=[\s,(·]|$)/g))
-      if (!names.some((x) => x.includes(n[0]))) problems.push(`${id}: 기준명 「${n[0]}」이 sources.md에 없음`);
   }
   return problems;
 }
@@ -103,6 +102,7 @@ function checkGlobal(global, sourcesText) {
   const table = sourcesText.split("## 글로벌")[1] || "";
   for (const [id, line] of global) {
     if (/^해당\s?없음/.test(line)) { if (!/^해당 없음 — .{8,}/.test(line)) problems.push(`${id}: 글로벌 비교 「해당 없음」의 이유가 없거나 짧음`); continue; }
+    for (const m of line.matchAll(/ISO(?:\/IEC)? \d{4,5}(?:-\d)?(?!(?:-\d)?:\d{4})\b/g)) problems.push(`${id}: 「${m[0]}」에 판 연도(:YYYY)가 없음`);
     if (!GLOBAL_KEYS.some((re) => line.match(re))) problems.push(`${id}: 글로벌 비교에 식별 가능한 기준(ISO 번호·법령 조항·기관명)이 없음(자리표시자 금지)`);
     for (const re of GLOBAL_KEYS) for (const m of line.matchAll(re)) {
       const key = m[0].replace(/^\(EU\) /, "").replace(/§(\d+)\.\d+$/, "Part $1");
@@ -120,11 +120,13 @@ function checkGraduation(text) {
   const need = ["learner/projects/", "문서 보존 기준표", "법인 행정 캘린더", "① 보존 기간", "② 기산점", "③ 국내 근거", "④ 출처 URL", "⑤ 보관 형태", "⑥ 기간 만료", "보존 예외",
     "상업장부", "세무 증빙", "근로 서류", "의사록", "개인정보가 든 문서", "계약서", "내부 기준 — 이유",
     "① 기산 사건", "② 기한", "③ 근거", "④ 출처 URL", "⑤ 담당", "⑥ 놓쳤을", "정기주총", "임원 임기", "변경등기", "인감", "건물 법정 점검", "보험 만기", "문서 파기", "직책"];
-  return need.filter((n) => !sec.includes(n)).map((n) => `tutor/assessment.md 졸업 산출물 절에 「${n}」 없음`);
+  const out = need.filter((n) => !sec.includes(n)).map((n) => `tutor/assessment.md 졸업 산출물 절에 「${n}」 없음`);
+  if ((sec.match(/④ 출처 URL/g) || []).length < 2) out.push("tutor/assessment.md 졸업 산출물 절: 두 문서 모두에 「④ 출처 URL」 칸이 있어야 함");
+  return out;
 }
 
 // R11 숫자 규칙: 국내 근거·글로벌 비교 줄에 보존 기간·기한·금액 숫자를 쓰지 않는다
-const NUMBER_RE = /\d+\s?(?:년|개월|일|주|회|%|원|만|천|시간|배|days?|months?|years?|weeks?|hours?)\b|\d+\s?(?:년|개월|일|주|회|%|원|만|천|시간|배)|매년|매월|매분기|지체 ?없이|즉시|이내|열흘|하루|이틀|사흘|(?:한|두|세|네|다섯|여섯) ?(?:달|해)|반년|(?:within|every) \w+/gi;
+const NUMBER_RE = /\d+\s?(?:년|개월|일|주|회|%|원|만|천|시간|배|days?|months?|years?|weeks?|hours?)\b|\d+\s?(?:년|개월|일|주|회|%|원|만|천|시간|배)|매년|매월|매분기|지체 ?없이|즉시|이내|열흘|하루|이틀|사흘|(?:한|두|세|네|다섯|여섯) ?(?:달|해)|반년|(?:within|every) \w+|annually|quarterly|monthly|without delay|immediately|(?:one|two|three|four|five|six|seven|ten|twelve|fourteen|thirty) \w+|분기마다|익월|익년|이십|삼십|십 ?일|보름/gi;
 function checkNumbers(domestic, global) {
   const problems = [];
   for (const [kind, map] of [["국내 근거", domestic], ["글로벌 비교", global]])
